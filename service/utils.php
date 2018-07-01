@@ -17,15 +17,27 @@ class utils
 	/** @var \phpbb\user */
 	protected $user;
 
+	/** @var \phpbb\auth\auth */
+	protected $auth;
+
 	/** @var \phpbb\db\driver\factory */
 	protected $db;
 
 	/** @var string */
 	protected $linkedacconts_table;
 
-	public function __construct(\phpbb\user $user, \phpbb\db\driver\factory $db, $linkedacconts_table)
+	/**
+	 * Constructor
+	 *
+	 * @param \phpbb\user							$user
+	 * @param \phpbb\auth\auth						$auth
+	 * @param \phpbb\db\driver\factory				$db
+	 * @param string								$linkedacconts_table
+	 */
+	public function __construct(\phpbb\user $user, \phpbb\auth\auth $auth, \phpbb\db\driver\factory $db, $linkedacconts_table)
 	{
 		$this->user					= $user;
+		$this->auth					= $auth;
 		$this->db					= $db;
 		$this->linkedacconts_table	= $linkedacconts_table;
 	}
@@ -303,8 +315,6 @@ class utils
 	 * that is linked to the current one.
 	 *
 	 * @param int $account_id The linked account id
-	 *
-	 * @return array
 	 */
 	public function switch_to_linked_account($account_id)
 	{
@@ -320,6 +330,110 @@ class utils
 			$session_autologin,
 			$session_viewonline
 		);
-		
 	}
+
+	/**
+	 * Checks whether the current user can change the author
+	 * of a post. This will only be possible if the post's
+	 * creator is linked to the current account.
+	 *
+	 * @param int $post_id The post id
+	 *
+	 * @return boolean
+	 */
+	public function can_change_author_of_post($post_id, $linked_accounts = null)
+	{
+
+		if($post_id == 0) { // creating a post
+			return true;
+		}
+
+		$sql = 'SELECT poster_id FROM ' . POSTS_TABLE . "
+			WHERE post_id = '" . (int) $post_id . "'";
+
+		$result = $this->db->sql_query($sql);
+		$output = $this->db->sql_fetchrow($result);
+		
+		$this->db->sql_freeresult($result);
+
+		if(!$output)
+		{
+			return false;
+		}
+
+		return $this->can_change_author_of_post_by_user($output['poster_id'], $linked_accounts);
+
+	}
+
+
+	/**
+	 * Checks whether the current user can change the author
+	 * of a post by its poster id. This will only be possible if
+	 * the post's creator is linked to the current account.
+	 *
+	 * @param int $poster_id The id of the poster
+	 *
+	 * @return boolean
+	 */
+	public function can_change_author_of_post_by_user($poster_id, $linked_accounts = null)
+	{
+
+		if($linked_accounts === null) {
+			$linked_accounts = $this->get_linked_accounts();
+		}
+
+		if($poster_id == (int) $this->user->data['user_id'])
+		{
+			return true;
+		}
+
+		$linked_accounts_ids = array_column($linked_accounts, 'user_id');
+		
+		return array_search($poster_id, $linked_accounts_ids) !== false;
+
+	}
+
+	/**
+	 * Checks whether the given user can post or reply
+	 * on a forum.
+	 *
+	 * @param int $user_id The id of the user
+	 * @param int $forum_id The id of the forum
+	 * @param string $mode The posting mode
+	 * @param boolean $is_first_post Whether we're
+	 *  creating a new topic
+	 *
+	 * @return boolean
+	 */
+	public function user_can_post_on_forum($user_id, $forum_id, $mode, $is_first_post)
+	{
+
+		$permissions = $this->auth->acl_get_list($user_id, false, $forum_id);
+
+		if(empty($permissions))
+		{
+			return false;
+		}
+
+		$permissions = array_keys($permissions[$forum_id]);
+		
+		switch($mode)
+		{
+			case 'post':
+				return array_search('f_post', $permissions) !== false;
+
+			case 'reply':
+			case 'quote':
+				return array_search('f_reply', $permissions) !== false;
+
+			case 'edit':
+				return $is_first_post
+					? array_search('f_post', $permissions) !== false
+					: array_search('f_reply', $permissions) !== false;
+		}
+
+		return false;
+
+	}
+
 }

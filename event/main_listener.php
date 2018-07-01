@@ -18,6 +18,12 @@ class main_listener implements EventSubscriberInterface
 	/** @var \phpbb\auth\auth */
 	protected $auth;
 
+	/** @var \phpbb\user */
+	protected $user;
+
+	/** @var \phpbb\request\request */
+	protected $request;
+
 	/** @var \phpbb\template\template */
 	protected $template;
 
@@ -27,6 +33,12 @@ class main_listener implements EventSubscriberInterface
 	/** @var \flerex\linkedaccounts\service\utils */
 	protected $utils;
 
+	/** @var string */
+	protected $root_path;
+
+	/** @var string */
+	protected $php_ext;
+
 	/**
 	 * Assign functions defined in this class to event listeners in the core
 	 *
@@ -35,27 +47,35 @@ class main_listener implements EventSubscriberInterface
 	static public function getSubscribedEvents()
 	{
 		return array(
-			'core.user_setup'			=> 'load_language_on_setup',
-			'core.permissions'			=> 'add_permissions',
-			'core.page_header'			=> 'add_switchable_accounts',
-			'core.delete_user_after'	=> 'cleanup_table',
+			'core.user_setup'						=> 'load_language_on_setup',
+			'core.permissions'						=> 'add_permissions',
+			'core.page_header'						=> 'add_switchable_accounts',
+			'core.delete_user_after'				=> 'cleanup_table',
+			'core.posting_modify_template_vars'		=> 'posting_as_template',
+			'core.posting_modify_submit_post_after'	=> 'posting_as_logic',
 		);
 	}
 
 	/**
 	 * Constructor
 	 *
+	 * @param \phpbb\auth\auth						$auth
 	 * @param \phpbb\user							$user
+	 * @param \phpbb\request\request				$request
 	 * @param \phpbb\template\template				$template
 	 * @param \phpbb\controller\helper				$helper
 	 * @param \flerex\linkedaccounts\service\utils	$utils
 	 */
-	public function __construct(\phpbb\auth\auth $auth, \phpbb\template\template $template, \phpbb\controller\helper $helper, \flerex\linkedaccounts\service\utils $utils)
+	public function __construct(\phpbb\auth\auth $auth, \phpbb\user $user, \phpbb\request\request $request, \phpbb\template\template $template, \phpbb\controller\helper $helper, \flerex\linkedaccounts\service\utils $utils, $root_path, $php_ext)
 	{
-		$this->auth		= $auth;
-		$this->template	= $template;
-		$this->helper	= $helper;
-		$this->utils	= $utils;
+		$this->auth			= $auth;
+		$this->user			= $user;
+		$this->request		= $request;
+		$this->template		= $template;
+		$this->helper		= $helper;
+		$this->utils		= $utils;
+		$this->root_path	= $root_path;
+		$this->php_ext		= $php_ext;
 	}
 
 	/**
@@ -84,7 +104,8 @@ class main_listener implements EventSubscriberInterface
 	public function add_permissions($event)
 	{
 		$permissions = $event['permissions'];
-		$permissions['u_link_accounts'] = array('lang' => 'ACL_U_LINK_ACCOUNTS', 'cat' => 'profile');
+		$permissions['u_link_accounts']	= array('lang' => 'ACL_U_LINK_ACCOUNTS', 'cat' => 'profile');
+		$permissions['u_post_as_account'] = array('lang' => 'ACL_U_POST_AS_ACCOUNT', 'cat' => 'post');
 		$permissions['a_link_accounts'] = array('lang' => 'ACL_A_LINK_ACCOUNTS', 'cat' => 'user_group');
 		$event['permissions'] = $permissions;
 	}
@@ -106,6 +127,101 @@ class main_listener implements EventSubscriberInterface
 				'NAME'			=> get_username_string('no_profile', $linked_account['user_id'], $linked_account['username'], $linked_account['user_colour']),
 			));
 		}
+	}
+
+	/**
+	 * Add the template variables necessary for
+	 *  the posting as menu.
+	 *
+	 * @param \phpbb\event\data $event The event object
+	 */
+	public function posting_as_template($event)
+	{
+
+		// The user must have permission
+		$post_as_permission = $this->auth->acl_get('u_post_as_account');
+		$this->template->assign_var('U_CAN_POST_AS_ACCOUNT', $post_as_permission);
+		if(!$post_as_permission) {
+			return;
+		}
+
+		$linked_accounts = $this->utils->get_linked_accounts();
+
+		// The user must have ownership over the post (if it's editing another account's post, the user should be linked to it)
+		$can_change_author = $this->utils->can_change_author_of_post($event['post_id'], $linked_accounts);
+		$this->template->assign_var('U_CAN_POST_AS_ACCOUNT', $can_change_author);
+		if(!$can_change_author) {
+			return;
+		}
+
+		$default_value = $event['mode'] == 'edit' ? (int) $event['post_data']['poster_id'] : $this->user->data['user_id'];
+		$poster_id = $this->request->variable('posting_as', $default_value);
+
+		$this->template->assign_block_vars('available_accounts', array(
+			'ID'	=> $this->user->data['user_id'],
+			'NAME'	=> get_username_string('username', $this->user->data['user_id'], $this->user->data['username'], $this->user->data['user_colour']),
+			'ATTR'	=> $poster_id == $default_value ? ' selected' : '',
+		));
+
+		$is_first_post = $event['mode'] =='post' || ($event['mode'] == 'edit' && $event['post_data']['topic_first_post_id'] == $event['post_id']);
+
+		$available_accounts = array_filter($linked_accounts, function($user) use (&$event, &$is_first_post) {
+			return $this->utils->can_switch_to($user['user_id']) && $this->utils->user_can_post_on_forum($user['user_id'], $event['post_data']['forum_id'], $event['mode'], $is_first_post);
+		});
+
+		// Don't show the “posting as” menu if you don't have any account link
+		$this->template->assign_var('U_CAN_POST_AS_ACCOUNT', count($available_accounts) > 0);
+
+		foreach($available_accounts as $account)
+		{
+			$this->template->assign_block_vars('available_accounts', array(
+				'ID'	=> $account['user_id'],
+				'NAME'	=> get_username_string('username', $account['user_id'], $account['username'], $account['user_colour']),
+				'ATTR'	=> $poster_id == $account['user_id'] ? ' selected' : '',
+			));
+		}
+	}
+
+	/**
+	 * Implement the logic behind the “posting
+	 * as” menu.
+	 *
+	 * @param \phpbb\event\data $event The event object
+	 */
+	public function posting_as_logic($event)
+	{
+
+		$default_value = $event['mode'] == 'edit' ? (int) $event['data']['poster_id'] : -1;
+
+		$poster_id = $this->request->variable('posting_as', $default_value);
+
+		$is_first_post = $event['data']['topic_first_post_id'] == 0 || $event['data']['topic_first_post_id'] == $event['data']['post_id'];
+
+		if(!$this->auth->acl_get('u_post_as_account') // user must have permissions
+			|| $poster_id == $default_value // “poster as” should be changed
+			|| !$this->utils->can_change_author_of_post_by_user($poster_id) // the new account of the post must be linked to the user
+			|| !$this->utils->can_switch_to($poster_id) // the new account should be loggin-able (not banned, inactive, etc.)
+			|| !$this->utils->user_can_post_on_forum($poster_id, $event['data']['forum_id'], $event['mode'], $is_first_post) // check whether the other user can post or reply in the forum depending if we're editing, replying or posting.
+		)
+		{
+			return;
+		}
+
+		if (!function_exists('change_poster'))
+		{
+			// needed for phpbb_get_post_data() (which is needed for change_poster)
+			include($this->root_path . 'includes/functions_mcp.' . $this->php_ext);
+			// needed for sync() (called inside change_poster)
+			include($this->root_path . 'includes/functions_admin.' . $this->php_ext);
+			// needed for change_poster()
+			include($this->root_path . 'includes/mcp/mcp_post.' . $this->php_ext);
+		}
+
+		$created_post = $event['data']['post_id'];
+		$post_info = phpbb_get_post_data(array($created_post), false, true)[$created_post];
+		$user_info = $this->utils->get_user($poster_id);
+
+		change_poster($post_info, $user_info);
 
 	}
 

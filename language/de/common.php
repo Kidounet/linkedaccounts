@@ -64,4 +64,7 @@ $lang = array_merge($lang, array(
 	'ADM_LINKED_ACCOUNTS_MANAGEMENT'		=> 'Benutzer verwalten',
 	'SELECT_USER'							=> 'Benutzer auswählen',
 	'MANAGING_USER'							=> 'Benutzerverwaltung :: %s',
+
+	// Posting as menu
+	'POSTING_AS'							=> 'Posting as',
 ));

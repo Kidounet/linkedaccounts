@@ -63,5 +63,8 @@ $lang = array_merge($lang, array(
 	// ACP Management Module
 	'ADM_LINKED_ACCOUNTS_MANAGEMENT'		=> 'Gestionar usuarios',
 	'SELECT_USER'							=> 'Seleccionar usuario',
-	'MANAGING_USER'							=> 'Gestión de usuario :: %s',
+	'MANAGING_USER'							=> 'Gestión de usuario :: %s',	
+
+	// Posting as menu
+	'POSTING_AS'							=> 'Publicando como',
 ));

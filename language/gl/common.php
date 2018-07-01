@@ -64,4 +64,7 @@ $lang = array_merge($lang, array(
 	'ADM_LINKED_ACCOUNTS_MANAGEMENT'		=> 'Xestionar usuarios',
 	'SELECT_USER'							=> 'Seleccionar usuario',
 	'MANAGING_USER'							=> 'Xestión de usuario :: %s',
+
+	// Posting as menu
+	'POSTING_AS'							=> 'Publicando coma',
 ));

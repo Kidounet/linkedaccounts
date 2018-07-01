@@ -22,5 +22,6 @@ if (empty($lang) || !is_array($lang))
 $lang = array_merge($lang, array(
 
 	'ACL_U_LINK_ACCOUNTS' => 'Pode vincular contas',
+	'ACL_U_POST_AS_ACCOUNT' => 'Pode publicar coma outra conta vinculada',
 	'ACL_A_LINK_ACCOUNTS' => 'Pode xestionar os enlaces entre contas',
 ));

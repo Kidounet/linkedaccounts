@@ -64,4 +64,7 @@ $lang = array_merge($lang, array(
 	'ADM_LINKED_ACCOUNTS_MANAGEMENT'		=> 'Beheer gebruikers',
 	'SELECT_USER'							=> 'Selecteer gebruiker',
 	'MANAGING_USER'							=> 'Gebruikers beheer :: %s',
+
+	// Posting as menu
+	'POSTING_AS'							=> 'Posting as',
 ));
