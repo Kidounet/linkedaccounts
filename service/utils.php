@@ -402,10 +402,13 @@ class utils
 	 * @param string $mode The posting mode
 	 * @param boolean $is_first_post Whether we're
 	 *  creating a new topic
+	 * @param boolean $out_needs_approval Output variable
+	 *  that will be set to true if the post must be set 
+	 *  to approval.
 	 *
 	 * @return boolean
 	 */
-	public function user_can_post_on_forum($user_id, $forum_id, $mode, $is_first_post)
+	public function user_can_post_on_forum($user_id, $forum_id, $mode, $is_first_post, &$out_needs_approval = false)
 	{
 
 		$permissions = $this->auth->acl_get_list($user_id, false, $forum_id);
@@ -416,6 +419,8 @@ class utils
 		}
 
 		$permissions = array_keys($permissions[$forum_id]);
+		
+		$out_needs_approval = array_search('f_noapprove', $permissions) === false;
 		
 		switch($mode)
 		{

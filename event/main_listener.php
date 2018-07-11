@@ -15,6 +15,8 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 class main_listener implements EventSubscriberInterface
 {
 
+	const DEFAULT_POSTING_AS_VALUE = -1;
+
 	/** @var \phpbb\auth\auth */
 	protected $auth;
 
@@ -47,12 +49,13 @@ class main_listener implements EventSubscriberInterface
 	static public function getSubscribedEvents()
 	{
 		return array(
-			'core.user_setup'						=> 'load_language_on_setup',
-			'core.permissions'						=> 'add_permissions',
-			'core.page_header'						=> 'add_switchable_accounts',
-			'core.delete_user_after'				=> 'cleanup_table',
-			'core.posting_modify_template_vars'		=> 'posting_as_template',
-			'core.posting_modify_submit_post_after'	=> 'posting_as_logic',
+			'core.user_setup'							=> 'load_language_on_setup',
+			'core.permissions'							=> 'add_permissions',
+			'core.page_header'							=> 'add_switchable_accounts',
+			'core.delete_user_after'					=> 'cleanup_table',
+			'core.posting_modify_template_vars'			=> 'posting_as_template',
+			'core.posting_modify_submit_post_after'		=> 'posting_as_logic',
+			'core.posting_modify_submit_post_before'	=> 'posting_as_logic_before',
 		);
 	}
 
@@ -118,6 +121,7 @@ class main_listener implements EventSubscriberInterface
 	 */
 	public function add_switchable_accounts($event)
 	{
+
 		$this->template->assign_var('U_CAN_LINK_ACCOUNT', $this->auth->acl_get('u_link_accounts'));
 		foreach($this->utils->get_linked_accounts() as $linked_account)
 		{
@@ -127,6 +131,7 @@ class main_listener implements EventSubscriberInterface
 				'NAME'			=> get_username_string('no_profile', $linked_account['user_id'], $linked_account['username'], $linked_account['user_colour']),
 			));
 		}
+
 	}
 
 	/**
@@ -165,7 +170,7 @@ class main_listener implements EventSubscriberInterface
 
 		$is_first_post = $event['mode'] =='post' || ($event['mode'] == 'edit' && $event['post_data']['topic_first_post_id'] == $event['post_id']);
 
-		$available_accounts = array_filter($linked_accounts, function($user) use (&$event, &$is_first_post) {
+		$available_accounts = array_filter($linked_accounts, function($user) use (&$event, $is_first_post) {
 			return $this->utils->can_switch_to($user['user_id']) && $this->utils->user_can_post_on_forum($user['user_id'], $event['post_data']['forum_id'], $event['mode'], $is_first_post);
 		});
 
@@ -182,30 +187,91 @@ class main_listener implements EventSubscriberInterface
 		}
 	}
 
+
+	/**
+	 * Inject in the posting procedure whether the post
+	 * should be set to be reapproved.
+	 *
+	 * For implementation reasons we are separating
+	 * posting_as_logic in two events (before & after
+	 * the posting procedure) to take advantage of
+	 * the posting procedure's ability to change the post
+	 * status (i.e. to set it back to be approved) when 
+	 * editing or replying.
+	 * 
+	 * @param \phpbb\event\data $event The event object
+	 */
+	public function posting_as_logic_before($event)
+	{
+
+		$default_value = $event['mode'] == 'edit' ? (int) $event['data']['poster_id'] : self::DEFAULT_POSTING_AS_VALUE;
+		$poster_id = $this->request->variable('posting_as', $default_value);
+
+		$is_first_post = $event['data']['topic_first_post_id'] == 0 || $event['data']['topic_first_post_id'] == $event['data']['post_id'];
+
+		$needs_approval = false;
+		if(!$this->auth->acl_get('u_post_as_account') // user must have permissions
+			|| $poster_id == $default_value // “poster as” should be changed
+			|| !$this->utils->can_change_author_of_post_by_user($poster_id) // the new account of the post must be linked to the user
+			|| !$this->utils->can_switch_to($poster_id) // the new account should be loggin-able (not banned, inactive, etc.)
+			|| !$this->utils->user_can_post_on_forum($poster_id, $event['data']['forum_id'], $event['mode'], $is_first_post, $needs_approval) // check whether the other user can post or reply in the forum depending if we're editing, replying or posting.
+		)
+		{
+
+			/*
+			
+				Most of these checks are very costly (they run several SQL queries under the hood) so
+				in order to avoid running them all again in the continuation of this method, we will
+				use the $data variable that is shared between both events in order to tell the other event
+				whether the checks failed or not.
+
+			 */
+
+			$data = $event['data'];
+			$data['flerex_linkedaccounts_cannot_continue'] = true;
+			$event['data'] = $data;
+
+ 			return;
+		}
+
+		if($needs_approval)
+		{
+			$data = $event['data'];
+			$data['post_visibility'] = $event['mode'] == 'edit' ? ITEM_REAPPROVE : ITEM_UNAPPROVED;
+			$event['data'] = $data;
+		}
+	}
+
 	/**
 	 * Implement the logic behind the “posting
 	 * as” menu.
+	 *
+	 * We need to implement all of the logic
+	 * regarding the switching posting as phpBB's
+	 * native posting procedure has the current
+	 * user hardcoded in the method. This implies
+	 * that we have to change the author AFTER
+	 * posting, which also means that we have to
+	 * make all the corresponding checks (whether
+	 * the user has permissions, etc.).
 	 *
 	 * @param \phpbb\event\data $event The event object
 	 */
 	public function posting_as_logic($event)
 	{
 
-		$default_value = $event['mode'] == 'edit' ? (int) $event['data']['poster_id'] : -1;
-
-		$poster_id = $this->request->variable('posting_as', $default_value);
-
-		$is_first_post = $event['data']['topic_first_post_id'] == 0 || $event['data']['topic_first_post_id'] == $event['data']['post_id'];
-
-		if(!$this->auth->acl_get('u_post_as_account') // user must have permissions
-			|| $poster_id == $default_value // “poster as” should be changed
-			|| !$this->utils->can_change_author_of_post_by_user($poster_id) // the new account of the post must be linked to the user
-			|| !$this->utils->can_switch_to($poster_id) // the new account should be loggin-able (not banned, inactive, etc.)
-			|| !$this->utils->user_can_post_on_forum($poster_id, $event['data']['forum_id'], $event['mode'], $is_first_post) // check whether the other user can post or reply in the forum depending if we're editing, replying or posting.
-		)
+		if(isset($event['data']['flerex_linkedaccounts_cannot_continue']))
 		{
 			return;
 		}
+
+		/* We know that if we can continue, “posting_as” will
+			already be filtered and we don't need to worry
+			about having to compute the correct default value,
+			so we set it to DEFAULT_POSTING_AS_VALUE (could be
+			anything).
+		*/
+		$poster_id = $this->request->variable('posting_as', self::DEFAULT_POSTING_AS_VALUE);
 
 		if (!function_exists('change_poster'))
 		{
