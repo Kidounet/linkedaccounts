@@ -200,7 +200,8 @@ class main_module
 
 			$id_ary = array_diff($id_ary, $this->utils->get_linked_accounts_of_array($this->user->data['user_id'], $id_ary));
 
-			$this->utils->create_links($this->user->data['user_id'], $id_ary);
+			$current_account = $this->request->variable('currentaccount', 0);
+			$this->utils->create_links($current_account, $id_ary);
 
 			trigger_error($this->user->lang('SUCCESSFUL_MULTI_LINK_CREATION') . adm_back_link($this->u_action));
 
